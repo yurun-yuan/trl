@@ -102,6 +102,7 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
         self,
         response_template: Union[str, List[int]],
         instruction_template: Optional[Union[str, List[int]]] = None,
+        response_template_first_occurence: bool = False,
         *args,
         mlm: bool = False,
         ignore_index: int = -100,
@@ -136,6 +137,7 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
 
         self.ignore_index = ignore_index
         self.padding_free = padding_free
+        self.response_template_first_occurence = response_template_first_occurence
 
     def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
         batch = super().torch_call(examples)
@@ -151,6 +153,8 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
                         == batch["labels"][i][idx : idx + len(self.response_token_ids)].tolist()
                     ):
                         response_token_ids_start_idx = idx
+                        if self.response_template_first_occurence:
+                            break
 
                 if response_token_ids_start_idx is None:
                     warnings.warn(
