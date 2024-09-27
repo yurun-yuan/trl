@@ -1,4 +1,3 @@
-# flake8: noqa
 # Copyright 2023 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,26 +44,26 @@ python examples/scripts/gkd.py \
     --lora_alpha 16
 """
 
+from accelerate import PartialState
 from datasets import load_dataset
 from transformers import AutoTokenizer, GenerationConfig
 
 from trl import (
     GKDConfig,
     GKDTrainer,
+    LogCompletionsCallback,
     ModelConfig,
+    SFTScriptArguments,
+    TrlParser,
     get_kbit_device_map,
     get_peft_config,
     get_quantization_config,
-    maybe_apply_chat_template,
-    LogCompletionsCallback,
 )
-from trl.commands.cli_utils import SFTScriptArguments, TrlParser
-from accelerate import PartialState
 
 
 if __name__ == "__main__":
     parser = TrlParser((SFTScriptArguments, GKDConfig, ModelConfig))
-    args, training_args, model_config = parser.parse_args_and_config()
+    script_args, training_args, model_config = parser.parse_args_and_config()
 
     ################
     # Model & Tokenizer
@@ -103,18 +102,15 @@ if __name__ == "__main__":
     ################
     # Dataset
     ################
-    raw_datasets = load_dataset(args.dataset_name)
+    dataset = load_dataset(script_args.dataset_name)
 
     with PartialState().local_main_process_first():
-        raw_datasets = raw_datasets.map(
+        dataset = dataset.map(
             lambda x: {
                 "prompt": tokenizer.apply_chat_template(x["prompt"], tokenize=False, add_generation_prompt=True)
             },
             num_proc=training_args.dataset_num_proc,
         )
-
-    train_dataset = raw_datasets[args.dataset_train_split]
-    eval_dataset = raw_datasets[args.dataset_test_split]
 
     ################
     # Training
@@ -123,8 +119,8 @@ if __name__ == "__main__":
         model=model_config.model_name_or_path,
         teacher_model=training_args.teacher_model_name_or_path,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        train_dataset=dataset[script_args.dataset_train_split],
+        eval_dataset=dataset[script_args.dataset_test_split],
         tokenizer=tokenizer,
         peft_config=get_peft_config(model_config),
     )
@@ -135,4 +131,7 @@ if __name__ == "__main__":
     trainer.add_callback(completions_callback)
     trainer.train()
 
+    # Save and push to hub
     trainer.save_model(training_args.output_dir)
+    if training_args.push_to_hub:
+        trainer.push_to_hub(dataset_name=script_args.dataset_name)
