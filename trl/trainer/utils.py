@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Mapping
 import dataclasses
 import importlib.resources as pkg_resources
 import json
@@ -270,7 +271,12 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
         self.padding_free = padding_free
 
     def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
-        batch = super().torch_call(examples)
+        signature_columns = ["input_ids", "labels", "attention_mask"]
+
+        if len(examples) != 0 and isinstance(examples[0], Mapping):
+            cleaned_examples = [{k, examples[k]} for k in examples if k in signature_columns]
+
+        batch = super().torch_call(cleaned_examples)
 
         for i in range(len(examples)):
             completion_start_idx = self.completion_start_idx_func(examples[i], batch["labels"][i])
