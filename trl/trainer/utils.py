@@ -19,7 +19,7 @@ import warnings
 from collections import deque
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
