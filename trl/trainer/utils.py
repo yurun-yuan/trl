@@ -280,6 +280,8 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
 
         batch = super().torch_call(cleaned_examples)
 
+        print(batch.keys())
+
         for i in range(len(examples)):
             completion_start_idx = self.completion_start_idx_func(examples[i], batch["labels"][i])
             if completion_start_idx is None:
