@@ -273,7 +273,7 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
     def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
         signature_columns = ["input_ids", "labels", "attention_mask"]
 
-        print(f"Example columns: {list(examples)}")
+        print(f"Example columns: {list(examples.keys())}")
 
         if len(examples) != 0 and isinstance(examples[0], Mapping):
             cleaned_examples = [{k, examples[k]} for k in examples if k in signature_columns]
