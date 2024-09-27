@@ -238,6 +238,64 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
 
         return batch
 
+class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling):
+    """
+    Data collator used for completion tasks. It ensures that all the tokens of the labels are set to an 'ignore_index'
+    when they do not come from the assistant. This ensure that the loss is only
+    calculated on the completion made by the assistant.
+
+    Args:
+        completion_start_idx_func (`Callable`): A function that takes one example along with its labels and returns the index of the start of the completion. If returns None, the example is ignored.
+        mlm (`bool`, *optional*, defaults to `False`): Whether or not to use masked language modeling in the underlying
+            `DataCollatorForLanguageModeling` class. Note that this option currently has no effect but is present
+             for flexibility and backwards-compatibility.
+        ignore_index (`int`, *optional*, defaults to `-100`):
+            The index to use to ignore the initial tokens with
+    """
+
+    def __init__(
+        self,
+        completion_start_idx_func: Callable[[Union[List[int], Any, Dict[str, Any]], torch.Tensor], Optional[int]],
+        *args,
+        mlm: bool = False,
+        ignore_index: int = -100,
+        padding_free: bool = False,
+        **kwargs,
+    ):
+        super().__init__(*args, mlm=mlm, **kwargs)
+
+        self.completion_start_idx_func = completion_start_idx_func
+
+        self.ignore_index = ignore_index
+        self.padding_free = padding_free
+
+    def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
+        batch = super().torch_call(examples)
+
+        for i in range(len(examples)):
+            completion_start_idx = self.completion_start_idx_func(examples[i], batch["labels"][i])
+            if completion_start_idx is None:
+                warnings.warn(
+                    f"Could not find completion_start_idx in the "
+                    f'following instance: {self.tokenizer.decode(batch["input_ids"][i])} '
+                    f"This instance will be ignored in loss calculation. "
+                    f"Note, if this happens often, consider increasing the `max_seq_length`."
+                )
+                batch["labels"][i, :] = self.ignore_index
+            else:
+                batch["labels"][i, :completion_start_idx] = self.ignore_index
+
+        if self.padding_free:
+            # remove padding, `attention_mask` and add `position_ids`
+            attn_mask = batch.pop("attention_mask")
+            batch["input_ids"] = batch["input_ids"][attn_mask.bool()].unsqueeze(0)
+            batch["position_ids"] = attn_mask.cumsum(1)[attn_mask.bool()].unsqueeze(0) - 1
+            batch["labels"] = batch["labels"][attn_mask.bool()].unsqueeze(0)
+            batch["labels"][batch["position_ids"] == 0] = self.ignore_index
+
+        return batch
+
+
 
 @dataclass
 class DataCollatorForChatML:
