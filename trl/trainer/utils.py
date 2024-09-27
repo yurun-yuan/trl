@@ -273,8 +273,6 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
     def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
         signature_columns = ["input_ids", "labels", "attention_mask"]
 
-        print(f"Example columns: {examples}")
-
         if len(examples) != 0 and isinstance(examples[0], Mapping):
             cleaned_examples = [
                 {k: example[k] for k in example.keys() if k in signature_columns}
@@ -282,8 +280,6 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
             ]
 
         batch = super().torch_call(cleaned_examples)
-
-        print(f"batch {batch}")
 
         for i in range(len(examples)):
             completion_start_idx = self.completion_start_idx_func(examples[i], batch["labels"][i])
@@ -306,6 +302,7 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
             batch["labels"] = batch["labels"][attn_mask.bool()].unsqueeze(0)
             batch["labels"][batch["position_ids"] == 0] = self.ignore_index
 
+        print(f"Batch after truncation {batch}")
         return batch
 
 
