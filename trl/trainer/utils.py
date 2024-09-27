@@ -302,7 +302,6 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
             batch["labels"] = batch["labels"][attn_mask.bool()].unsqueeze(0)
             batch["labels"][batch["position_ids"] == 0] = self.ignore_index
 
-        print(f"Batch after truncation {batch}")
         return batch
 
 
