@@ -276,7 +276,10 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
         print(f"Example columns: {examples}")
 
         if len(examples) != 0 and isinstance(examples[0], Mapping):
-            cleaned_examples = [{k, examples[k]} for k in examples if k in signature_columns]
+            cleaned_examples = [
+                {k: example[k] for k in example.keys() if k in signature_columns}
+                for example in examples
+            ]
 
         batch = super().torch_call(cleaned_examples)
 
