@@ -293,8 +293,8 @@ class DataCollatorForCompletionOnlyLMCustomized(DataCollatorForLanguageModeling)
                 batch["labels"][i, :] = self.ignore_index
             else:
                 batch["labels"][i, :completion_start_idx] = self.ignore_index
-                print(len(examples[i]['reserved_chat']))
-                print(list(zip(batch["input_ids"][i].tolist(), batch["labels"][i].tolist())))
+                # print(len(examples[i]['reserved_chat']))
+                # print(list(zip(batch["input_ids"][i].tolist(), batch["labels"][i].tolist())))
 
         if self.padding_free:
             # remove padding, `attention_mask` and add `position_ids`
