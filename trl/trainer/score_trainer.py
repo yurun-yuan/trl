@@ -134,6 +134,8 @@ class SCORETrainer(Trainer):
         self.local_seed = args.seed + accelerator.process_index * 100003  # Prime
         if args.num_sample_generations > 0:
             self.sample_generations_freq = max(1, args.num_total_batches // args.num_sample_generations)
+
+        assert args.rloo_k > 0, "`rloo_k` must be a positive integer"
         self.local_dataloader_batch_size = exact_div(
             args.local_batch_size, args.rloo_k, "`local_batch_size` must be a multiple of rloo_k"
         )  # RLOO logic: needed because RLOO repeats the same prompt args.rloo_k times
@@ -374,8 +376,11 @@ class SCORETrainer(Trainer):
 
                 # vectorized RLOO advantages implementation
                 rlhf_reward = rlhf_reward.reshape(args.rloo_k, -1)
-                baseline = (rlhf_reward.sum(0) - rlhf_reward) / (args.rloo_k - 1)
-                advantages = rlhf_reward - baseline
+                if args.rloo_k > 1:
+                    baseline = (rlhf_reward.sum(0) - rlhf_reward) / (args.rloo_k - 1)
+                    advantages = rlhf_reward - baseline
+                else:
+                    advantages = rlhf_reward
                 advantages = advantages.flatten()
                 torch.cuda.empty_cache()
 
