@@ -89,6 +89,8 @@ _import_structure = {
         "RewardTrainer",
         "RLOOConfig",
         "RLOOTrainer",
+        "SCOREConfig",
+        "SCORETrainer",
         "SFTConfig",
         "SFTTrainer",
         "WinRateCallback",
