@@ -107,6 +107,7 @@ class SCORETrainer(Trainer):
         self.data_collator = data_collator if data_collator is not None else DataCollatorWithPadding(tokenizer)
         self.eval_dataset = eval_dataset
         self.optimizer, self.lr_scheduler = optimizers
+        self.apply_ids_chat_template = apply_ids_chat_template
 
         assert stage in [0, 1], "`stage` must be either 0 or 1"
         self.stage = stage
