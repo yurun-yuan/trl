@@ -102,7 +102,7 @@ class SCORETrainer(Trainer):
         self.get_reward = get_reward
         self.train_dataset = train_dataset
         self.train_dataset_len = len(train_dataset)
-        self.data_collator = data_collator
+        self.data_collator = data_collator if data_collator is not None else DataCollatorWithPadding(tokenizer)
         self.eval_dataset = eval_dataset
         self.optimizer, self.lr_scheduler = optimizers
 
@@ -189,7 +189,7 @@ class SCORETrainer(Trainer):
             self.train_dataset,
             batch_size=self.local_dataloader_batch_size,
             shuffle=True,
-            collate_fn=DataCollatorWithPadding(tokenizer),
+            collate_fn=self.data_collator,
             drop_last=True,  # needed; otherwise the last batch will be of ragged shape
         )
         # sync random states for DataLoader(shuffle=True) before `accelerator.prepare`
@@ -201,7 +201,7 @@ class SCORETrainer(Trainer):
         self.eval_dataloader = DataLoader(
             self.eval_dataset,
             batch_size=args.per_device_eval_batch_size,
-            collate_fn=DataCollatorWithPadding(self.tokenizer),
+            collate_fn=self.data_collator,
             drop_last=True,
         )  # no need to shuffle eval dataset
         self.eval_dataloader = accelerator.prepare(self.eval_dataloader)
