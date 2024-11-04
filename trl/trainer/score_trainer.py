@@ -83,6 +83,7 @@ class SCORETrainer(Trainer):
         # less commonly used
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         callbacks: Optional[List[TrainerCallback]] = None,
+        accelerator: Optional[Accelerator] = None,
     ) -> None:
         if ref_policy is policy:
             raise ValueError(
@@ -120,8 +121,13 @@ class SCORETrainer(Trainer):
         #########
         if args.total_episodes is None:  # allow the users to define episodes in terms of epochs.
             args.total_episodes = int(args.num_train_epochs * self.train_dataset_len)
-        accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
+
+        # accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
+        # self.accelerator = accelerator
+        if accelerator is None:
+            accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
         self.accelerator = accelerator
+        
         args.world_size = accelerator.num_processes
         args.local_batch_size = (
             args.per_device_train_batch_size * args.gradient_accumulation_steps * args.num_mini_batches
