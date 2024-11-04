@@ -54,3 +54,6 @@ class SCOREConfig(OnPolicyConfig):
     rloo_k: int = 1
     prompt_templates: Iterable[str] = None
     num_turns: int = 2
+    beta1: float = 0.1
+    beta2: float = 1
+    bonus_coef: float = 10

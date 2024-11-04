@@ -1517,3 +1517,16 @@ def generate_model_card(
         tokenizers_version=version("tokenizers"),
     )
     return card
+
+def count_Leading_trailing_values(tensor: torch.Tensor, value: int) -> int:
+    # Create a mask where the tensor elements equal the specified value
+    mask = (tensor == value)
+    
+    # Find the first non-value element in the reversed mask
+    non_value_idx = (mask == 0).nonzero(as_tuple=True)[0]
+    
+    # The number of trailing values is the index of the first non-value element
+    if len(non_value_idx) == 0:
+        return len(tensor), 0
+    else:
+        return non_value_idx[0].item(), len(tensor) - non_value_idx[-1].item() - 1
