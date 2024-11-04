@@ -229,6 +229,8 @@ class SCORETrainer(Trainer):
 
         if self.num_turns != 2:
             raise NotImplementedError("Only 2-turn conversations are supported at the moment")
+        if args.rloo_k > 1:
+            raise NotImplementedError("Only rloo_k=1 is supported at the moment")
 
     def get_train_dataloader(self) -> DataLoader:
         return self.dataloader
@@ -299,8 +301,10 @@ class SCORETrainer(Trainer):
             self.state.episode += 1 * args.batch_size
             data = next(iter_dataloader)
             with torch.no_grad():
-                queries = [data["input_ids"].to(device).repeat(args.rloo_k, 1)] + [None] * (self.num_turns - 1)
-                query_indices = data["idx"].to(device).repeat(args.rloo_k, 1)
+                # queries = [data["input_ids"].to(device).repeat(args.rloo_k, 1)] + [None] * (self.num_turns - 1)
+                # query_indices = data["idx"].to(device).repeat(args.rloo_k, 1)[0]
+                queries = [data["input_ids"].to(device)] + [None] * (self.num_turns - 1)
+                query_indices = data["idx"].to(device)
                 context_length = [queries[0].shape[1]] + [None] * (self.num_turns - 1)
                 query_responses = [None] * self.num_turns
                 logitss = [None] * self.num_turns
@@ -333,6 +337,7 @@ class SCORETrainer(Trainer):
                 max_length = max(tensor.size(0) for tensor in queries_t1)
                 queries_t1 = [F.pad(tensor, (max_length - tensor.size(0), 0), value=tokenizer.pad_token_id) for tensor in queries_t1]
                 queries_t1 = torch.stack(queries_t1, dim=0)
+                # TODO If args.rloo_k > 1, repeat queries_t1
                 queries[1] = queries_t1
 
                 context_length[1] = queries_t1.shape[1]
