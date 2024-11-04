@@ -499,7 +499,9 @@ class SCORETrainer(Trainer):
                     # fmt: off
                     del (
                         # output, 
-                        logits, new_all_logprobs, new_logprobs,
+                        logits, 
+                        # new_all_logprobs, 
+                        new_logprobs,
                         logprobs_diff, ratio, pg_losses, pg_losses2,
                         pg_loss, loss, pg_clipfrac, 
                         # prob_dist, 
