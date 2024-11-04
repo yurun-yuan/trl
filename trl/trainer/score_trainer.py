@@ -324,14 +324,15 @@ class SCORETrainer(Trainer):
 
 
                 queries_t1 = []
-                for i in range(queries_t1.shape[0]):
-                    num_leading_pad, num_trailing_pad = count_Leading_trailing_values(queries_t1[i], tokenizer.pad_token_id)
-                    query_resp_t0 = queries_t1[num_leading_pad : -num_trailing_pad]
+                for i in range(query_responses_t0.shape[0]):
+                    num_leading_pad, num_trailing_pad = count_Leading_trailing_values(query_responses_t0[i], tokenizer.pad_token_id)
+                    query_resp_t0 = query_responses_t0[num_leading_pad : -num_trailing_pad]
                     query_resp_t0 = self.apply_ids_chat_template(query_resp_t0, self.prompt_templates[1])
                     queries_t1.append(query_resp_t0)
                 max_length = max(tensor.size(0) for tensor in queries_t1)
                 queries_t1 = [F.pad(tensor, (max_length - tensor.size(0), 0), value=tokenizer.pad_token_id) for tensor in queries_t1]
                 queries_t1 = torch.stack(queries_t1, dim=0)
+                queries[1] = queries_t1
 
                 context_length[1] = queries_t1.shape[1]
 
