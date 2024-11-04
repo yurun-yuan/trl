@@ -18,7 +18,7 @@ import os
 import textwrap
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -50,7 +50,6 @@ from ..trainer.utils import (
     exact_div,
     first_true_indices,
     forward,
-    get_reward,
     prepare_deepspeed,
     print_rich_table,
     truncate_response,
@@ -72,9 +71,10 @@ class SCORETrainer(Trainer):
         self,
         config: SCOREConfig,
         tokenizer: PreTrainedTokenizer,
+        apply_ids_chat_template: Callable[[Iterable[Tuple[str, torch.Tensor]]], torch.Tensor], # apply_ids_chat_template([('user', Tensor), ('assistant', Tensor), ...]) -> Tensor
         policy: nn.Module,
         ref_policy: nn.Module,
-        reward_model: nn.Module,
+        get_reward: Callable[[str, Mapping[str, Any]], float], # get_reward(response, row) -> scalar reward
         train_dataset: Dataset,
         data_collator: Optional[DataCollatorWithPadding] = None,
         eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
@@ -99,7 +99,7 @@ class SCORETrainer(Trainer):
         self.policy.generation_config.pad_token_id = None  # generate tokens without truncation / padding
 
         self.ref_policy = ref_policy
-        self.reward_model = reward_model
+        self.get_reward = get_reward
         self.train_dataset = train_dataset
         self.train_dataset_len = len(train_dataset)
         self.data_collator = data_collator
@@ -143,7 +143,7 @@ class SCORETrainer(Trainer):
         #########
         # setup model, optimizer, and others
         #########
-        for module in [policy, ref_policy, reward_model]:
+        for module in [policy, ref_policy]:
             disable_dropout_in_model(module)
         if args.stop_token and args.stop_token == "eos":
             args.stop_token_id = tokenizer.eos_token_id
@@ -207,16 +207,16 @@ class SCORETrainer(Trainer):
         self.eval_dataloader = accelerator.prepare(self.eval_dataloader)
 
         if self.is_deepspeed_enabled:
-            self.reward_model = prepare_deepspeed(
-                self.reward_model, args.per_device_train_batch_size, args.fp16, args.bf16
-            )
             self.ref_policy = prepare_deepspeed(
                 self.ref_policy, args.per_device_train_batch_size, args.fp16, args.bf16
             )
             self.deepspeed = self.model
         else:
             self.ref_policy = self.ref_policy.to(self.accelerator.device)
-            self.reward_model = self.reward_model.to(self.accelerator.device)
+
+        self.num_turns = args.num_turns
+        self.prompt_templates = args.prompt_templates
+        assert len(self.prompt_templates) == self.num_turns, "Number of prompt templates must match `num_turns`"
 
     def get_train_dataloader(self) -> DataLoader:
         return self.dataloader
@@ -231,7 +231,6 @@ class SCORETrainer(Trainer):
         model = self.model
         self.model_wrapped = self.model
         ref_policy = self.ref_policy
-        reward_model = self.reward_model
         tokenizer = self.tokenizer
         dataloader = self.dataloader
         device = accelerator.device

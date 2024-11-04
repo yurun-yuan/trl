@@ -14,6 +14,7 @@
 
 import os
 from dataclasses import dataclass
+from typing import Iterable
 
 from ..trainer.utils import OnPolicyConfig
 
@@ -51,3 +52,5 @@ class SCOREConfig(OnPolicyConfig):
     kl_coef: float = 0.05
     cliprange: float = 0.2
     rloo_k: int = 1
+    prompt_templates: Iterable[str] = None
+    num_turns: int = 2
