@@ -49,7 +49,6 @@ class SCOREConfig(OnPolicyConfig):
     reward_model_path: str = "EleutherAI/pythia-160m"
     num_ppo_epochs: int = 4
     whiten_rewards: bool = False
-    kl_coef: float = 0.05
     cliprange: float = 0.2
     rloo_k: int = 1
     prompt_templates: Iterable[str] = None
