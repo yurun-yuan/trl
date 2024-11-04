@@ -268,7 +268,7 @@ class SCORETrainer(Trainer):
         pg_loss_stats = torch.zeros(stats_shape, device=device)
         vf_loss_stats = torch.zeros(stats_shape, device=device)
         vf_clipfrac_stats = torch.zeros(stats_shape, device=device)
-        entropy_stats = torch.zeros(stats_shape, device=device)
+        # entropy_stats = torch.zeros(stats_shape, device=device)
         ratio_stats = torch.zeros(stats_shape, device=device)
         model.train()
 
@@ -299,8 +299,7 @@ class SCORETrainer(Trainer):
             self.state.episode += 1 * args.batch_size
             data = next(iter_dataloader)
             with torch.no_grad():
-                queries = [None] * self.num_turns
-                queries[0] = data["input_ids"].to(device).repeat(args.rloo_k, 1)
+                queries = [data["input_ids"].to(device).repeat(args.rloo_k, 1)] + [None] * (self.num_turns - 1)
                 query_indices = data["idx"].to(device).repeat(args.rloo_k, 1)
                 context_length = [queries[0].shape[1]] + [None] * (self.num_turns - 1)
                 query_responses = [None] * self.num_turns
@@ -321,12 +320,13 @@ class SCORETrainer(Trainer):
                         generation_config,
                     )
                     query_responses[0] = query_responses_t0
+                    logitss[0] = logitss_t0
 
 
                 queries_t1 = []
                 for i in range(query_responses_t0.shape[0]):
                     num_leading_pad, num_trailing_pad = count_Leading_trailing_values(query_responses_t0[i], tokenizer.pad_token_id)
-                    query_resp_t0 = query_responses_t0[num_leading_pad : -num_trailing_pad]
+                    query_resp_t0 = query_responses_t0[i][num_leading_pad : -num_trailing_pad]
                     query_resp_t0 = self.apply_ids_chat_template(query_resp_t0, self.prompt_templates[1].to(query_resp_t0.device))
                     queries_t1.append(query_resp_t0)
                 max_length = max(tensor.size(0) for tensor in queries_t1)
@@ -339,7 +339,7 @@ class SCORETrainer(Trainer):
                 with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
                     query_responses_t1, logitss_t1 = batch_generation(
                         unwrapped_model,
-                        queries_t1,
+                        queries[1],
                         args.local_rollout_forward_batch_size,
                         tokenizer.pad_token_id,
                         generation_config,
@@ -359,8 +359,7 @@ class SCORETrainer(Trainer):
                         torch.cuda.empty_cache()
 
                         ref_output = forward(ref_policy, query_response, tokenizer.pad_token_id)
-                        ref_logits = ref_output.logits[:, context_length[turn] - 1 : -1]
-                        ref_logits /= args.temperature + 1e-7
+                        ref_logits = ref_output.logits[:, context_length[turn] - 1 : -1] / (args.temperature + 1e-7)
                         ref_all_logprob = F.log_softmax(ref_logits, dim=-1)
                         ref_logprob = torch.gather(ref_all_logprob, 2, response.unsqueeze(-1)).squeeze(-1)
                         del ref_output, ref_logits, ref_all_logprob
@@ -445,20 +444,20 @@ class SCORETrainer(Trainer):
                             micro_batch_end = micro_batch_start + args.per_device_train_batch_size
                             micro_batch_inds = mini_batch_inds[micro_batch_start:micro_batch_end]
                             mb_advantage = advantages[micro_batch_inds]
-                            mb_responses = [responses[turn][micro_batch_inds] for turn in range(self.num_turns)]
-                            mb_query_responses = [query_responses[turn][micro_batch_inds] for turn in range(self.num_turns)]
-                            mb_logprobs = [logprobs[turn][micro_batch_inds] for turn in range(self.num_turns)]
 
-                            output = [forward(model, mb_query_responses[turn], tokenizer.pad_token_id) for turn in range(self.num_turns)]
-                            logits = [
-                                output[turn].logits[:, context_length - 1 : -1]/args.temperature + 1e-7
-                                for turn in range(self.num_turns)
-                            ]
-                            new_all_logprobs = [F.log_softmax(logits[turn], dim=-1) for turn in range(self.num_turns)]
-                            new_logprobs = [torch.gather(new_all_logprobs[turn], 2, mb_responses[turn].unsqueeze(-1)).squeeze(-1) for turn in range(self.num_turns)]
-                            new_logprobs = [torch.masked_fill(
-                                new_logprobs[turn], padding_masks[turn][micro_batch_inds], INVALID_LOGPROB
-                            ) for turn in range(self.num_turns)]
+                            mb_logprobs, new_all_logprobs, new_logprobs  = [], [], []
+                            for turn in range(self.num_turns):
+                                mb_responses = responses[turn][micro_batch_inds]
+                                mb_query_responses = query_responses[turn][micro_batch_inds]
+                                mb_logprobs.append(logprobs[turn][micro_batch_inds])
+
+                                output = forward(model, mb_query_responses, tokenizer.pad_token_id)
+                                logits = output.logits[:, context_length - 1 : -1]/(args.temperature + 1e-7)
+                                new_all_logprobs.append(F.log_softmax(logits, dim=-1))
+                                new_logprob = torch.gather(new_all_logprobs[turn], 2, mb_responses.unsqueeze(-1)).squeeze(-1)
+                                new_logprobs.append(torch.masked_fill(
+                                    new_logprob, padding_masks[turn][micro_batch_inds], INVALID_LOGPROB
+                                ))
 
                             # For stat only
                             new_ratio = (new_logprobs - mb_logprobs).exp()
@@ -478,15 +477,15 @@ class SCORETrainer(Trainer):
                             optimizer.zero_grad()
                             with torch.no_grad():
                                 pg_clipfrac = (pg_losses2 > pg_losses).float().mean()
-                                prob_dist = torch.nn.functional.softmax(logits, dim=-1)
-                                entropy = torch.logsumexp(logits, dim=-1) - torch.sum(prob_dist * logits, dim=-1)
+                                # prob_dist = torch.nn.functional.softmax(logits, dim=-1)
+                                # entropy = torch.logsumexp(logits, dim=-1) - torch.sum(prob_dist * logits, dim=-1)
                                 approxkl = 0.5 * (logprobs_diff**2).mean()
                                 approxkl_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = approxkl
                                 pg_clipfrac_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = (
                                     pg_clipfrac
                                 )
                                 pg_loss_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = pg_loss
-                                entropy_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = entropy.mean()
+                                # entropy_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = entropy.mean()
                                 ratio_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = new_ratio.mean()
                         gradient_accumulation_idx += 1
                     minibatch_idx += 1
@@ -494,22 +493,29 @@ class SCORETrainer(Trainer):
                     # del everything and empty cache
                     # fmt: off
                     del (
-                        output, logits, new_all_logprobs, new_logprobs,
+                        # output, 
+                        logits, new_all_logprobs, new_logprobs,
                         logprobs_diff, ratio, pg_losses, pg_losses2,
-                        pg_loss, loss, pg_clipfrac, prob_dist, entropy, approxkl,
-                        mb_advantage, mb_responses, mb_query_responses, mb_logprobs,
+                        pg_loss, loss, pg_clipfrac, 
+                        # prob_dist, 
+                        # entropy, 
+                        approxkl,
+                        mb_advantage, 
+                        # mb_responses, 
+                        # mb_query_responses, 
+                        mb_logprobs,
                     )
                     # fmt: on
                     torch.cuda.empty_cache()
             with torch.no_grad():
-                mean_kl = kl.sum(1).mean()
-                mean_entropy = (-logprobs).sum(1).mean()
+                # mean_entropy = (-logprobs).sum(1).mean()
                 mean_non_score_reward = non_score_reward.mean()
                 eps = int(self.state.episode / (time.time() - start_time))
                 metrics = {}
                 metrics["eps"] = eps
-                metrics["objective/kl"] = self.accelerator.gather(mean_kl).mean().item()
-                metrics["objective/entropy"] = self.accelerator.gather(mean_entropy).mean().item()
+                metrics["objective/kl_turn1"] = self.accelerator.gather(kl[0].sum(1).mean()).mean().item()
+                metrics["objective/kl_turn2"] = self.accelerator.gather(kl[1].sum(1).mean()).mean().item()
+                # metrics["objective/entropy"] = self.accelerator.gather(mean_entropy).mean().item()
                 metrics["objective/non_score_reward"] = self.accelerator.gather(mean_non_score_reward).mean().item()
                 metrics["objective/rlhf_reward"] = self.accelerator.gather(rlhf_reward).mean().item()
                 metrics["objective/scores"] = self.accelerator.gather(scores.mean()).mean().item()
@@ -518,7 +524,7 @@ class SCORETrainer(Trainer):
                 metrics["loss/policy_avg"] = self.accelerator.gather(pg_loss_stats).mean().item()
                 metrics["loss/value_avg"] = self.accelerator.gather(vf_loss_stats).mean().item()
                 metrics["val/clipfrac_avg"] = self.accelerator.gather(vf_clipfrac_stats).mean().item()
-                metrics["policy/entropy_avg"] = self.accelerator.gather(entropy_stats).mean().item()
+                # metrics["policy/entropy_avg"] = self.accelerator.gather(entropy_stats).mean().item()
                 metrics["val/ratio"] = self.accelerator.gather(ratio_stats).mean().item()
                 metrics["val/ratio_var"] = self.accelerator.gather(ratio_stats).var().item()
                 metrics["val/num_eos_tokens"] = (responses == tokenizer.eos_token_id).sum().item()
