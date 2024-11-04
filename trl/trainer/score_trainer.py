@@ -269,7 +269,7 @@ class SCORETrainer(Trainer):
         vf_loss_stats = torch.zeros(stats_shape, device=device)
         vf_clipfrac_stats = torch.zeros(stats_shape, device=device)
         # entropy_stats = torch.zeros(stats_shape, device=device)
-        ratio_stats = torch.zeros(stats_shape, device=device)
+        # ratio_stats = torch.zeros(stats_shape, device=device)
         model.train()
 
         # trainer state initialization
@@ -445,23 +445,22 @@ class SCORETrainer(Trainer):
                             micro_batch_inds = mini_batch_inds[micro_batch_start:micro_batch_end]
                             mb_advantage = advantages[micro_batch_inds]
 
-                            mb_logprobs, new_all_logprobs, new_logprobs  = [], [], []
+                            mb_logprobs, new_logprobs  = [], []
                             for turn in range(self.num_turns):
                                 mb_responses = responses[turn][micro_batch_inds]
                                 mb_query_responses = query_responses[turn][micro_batch_inds]
                                 mb_logprobs.append(logprobs[turn][micro_batch_inds])
 
                                 output = forward(model, mb_query_responses, tokenizer.pad_token_id)
-                                logits = output.logits[:, context_length - 1 : -1]/(args.temperature + 1e-7)
-                                new_all_logprobs.append(F.log_softmax(logits, dim=-1))
-                                new_logprob = torch.gather(new_all_logprobs[turn], 2, mb_responses.unsqueeze(-1)).squeeze(-1)
+                                logits = output.logits[:, context_length[turn] - 1 : -1]/(args.temperature + 1e-7)
+                                new_all_logprob = F.log_softmax(logits, dim=-1)
+                                new_logprob = torch.gather(new_all_logprob, 2, mb_responses.unsqueeze(-1)).squeeze(-1)
                                 new_logprobs.append(torch.masked_fill(
                                     new_logprob, padding_masks[turn][micro_batch_inds], INVALID_LOGPROB
                                 ))
 
                             # For stat only
-                            new_ratio = (new_logprobs - mb_logprobs).exp()
-
+                            # new_ratio = (new_logprobs - mb_logprobs).exp()
 
                             new_logprobs = new_logprobs[0].sum(1) + new_logprobs[1].sum(1)
                             mb_logprobs = mb_logprobs[0].sum(1) + mb_logprobs[1].sum(1)
@@ -486,7 +485,7 @@ class SCORETrainer(Trainer):
                                 )
                                 pg_loss_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = pg_loss
                                 # entropy_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = entropy.mean()
-                                ratio_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = new_ratio.mean()
+                                # ratio_stats[ppo_epoch_idx, minibatch_idx, gradient_accumulation_idx] = new_ratio.mean()
                         gradient_accumulation_idx += 1
                     minibatch_idx += 1
                     self.state.global_step += 1
@@ -525,8 +524,8 @@ class SCORETrainer(Trainer):
                 metrics["loss/value_avg"] = self.accelerator.gather(vf_loss_stats).mean().item()
                 metrics["val/clipfrac_avg"] = self.accelerator.gather(vf_clipfrac_stats).mean().item()
                 # metrics["policy/entropy_avg"] = self.accelerator.gather(entropy_stats).mean().item()
-                metrics["val/ratio"] = self.accelerator.gather(ratio_stats).mean().item()
-                metrics["val/ratio_var"] = self.accelerator.gather(ratio_stats).var().item()
+                # metrics["val/ratio"] = self.accelerator.gather(ratio_stats).mean().item()
+                # metrics["val/ratio_var"] = self.accelerator.gather(ratio_stats).var().item()
                 metrics["val/num_eos_tokens"] = (responses == tokenizer.eos_token_id).sum().item()
                 metrics["lr"] = self.lr_scheduler.get_last_lr()[0]
                 metrics["episode"] = self.state.episode
