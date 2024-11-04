@@ -525,7 +525,8 @@ class SCORETrainer(Trainer):
                 # metrics["objective/entropy"] = self.accelerator.gather(mean_entropy).mean().item()
                 metrics["objective/non_score_reward"] = self.accelerator.gather(mean_non_score_reward).mean().item()
                 metrics["objective/rlhf_reward"] = self.accelerator.gather(rlhf_reward).mean().item()
-                metrics["objective/scores"] = self.accelerator.gather(scores.mean()).mean().item()
+                metrics["objective/scores_turn1"] = self.accelerator.gather(scores[0].mean()).mean().item()
+                metrics["objective/scores_turn2"] = self.accelerator.gather(scores[1].mean()).mean().item()
                 metrics["policy/approxkl_avg"] = self.accelerator.gather(approxkl_stats).mean().item()
                 metrics["policy/clipfrac_avg"] = self.accelerator.gather(pg_clipfrac_stats).mean().item()
                 metrics["loss/policy_avg"] = self.accelerator.gather(pg_loss_stats).mean().item()
@@ -534,13 +535,14 @@ class SCORETrainer(Trainer):
                 # metrics["policy/entropy_avg"] = self.accelerator.gather(entropy_stats).mean().item()
                 # metrics["val/ratio"] = self.accelerator.gather(ratio_stats).mean().item()
                 # metrics["val/ratio_var"] = self.accelerator.gather(ratio_stats).var().item()
-                metrics["val/num_eos_tokens"] = (responses == tokenizer.eos_token_id).sum().item()
+                metrics["val/num_eos_tokens_turn1"] = (responses[0] == tokenizer.eos_token_id).sum().item()
+                metrics["val/num_eos_tokens_turn2"] = (responses[1] == tokenizer.eos_token_id).sum().item()
                 metrics["lr"] = self.lr_scheduler.get_last_lr()[0]
                 metrics["episode"] = self.state.episode
                 self.state.epoch = self.state.episode / self.train_dataset_len  # used by self.log
                 self.state.global_step += 1
                 self.log(metrics)
-            del kl, mean_kl, mean_entropy, scores
+            del kl, scores
 
             self.lr_scheduler.step()
             self.control = self.callback_handler.on_step_end(args, self.state, self.control)
