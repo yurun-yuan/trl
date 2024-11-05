@@ -325,6 +325,8 @@ class SCORETrainer(Trainer):
                     logitss[0] = logitss_t0
                     del query_responses_t0, logitss_t0
                     queries[0] = None  # free up memory
+                    torch.cuda.empty_cache()
+                    gc.collect()
 
 
                 queries_t1 = []
@@ -335,6 +337,8 @@ class SCORETrainer(Trainer):
                     query_resp_t0 = self.apply_ids_chat_template(query_resp_t0, self.prompt_templates[1].to(device))
                     queries_t1.append(query_resp_t0.to(device))
                     del query_resp_t0
+                    torch.cuda.empty_cache()
+                    gc.collect()
                 max_length = max(tensor.size(0) for tensor in queries_t1)
                 queries_t1 = [F.pad(tensor, (max_length - tensor.size(0), 0), value=tokenizer.pad_token_id) for tensor in queries_t1]
                 queries_t1 = torch.stack(queries_t1, dim=0)
@@ -355,8 +359,12 @@ class SCORETrainer(Trainer):
                     logitss[1] = logitss_t1
                     del query_responses_t1, logitss_t1
                     queries[1] = None  # free up memory
+                    torch.cuda.empty_cache()
+                    gc.collect()
 
                 del queries
+                torch.cuda.empty_cache()
+                gc.collect()
 
                 for turn in range(self.num_turns):
                     for i in range(0, query_indices.shape[0], args.local_rollout_forward_batch_size):
@@ -367,6 +375,7 @@ class SCORETrainer(Trainer):
                         logprob = torch.gather(all_logprob, 2, response.unsqueeze(-1)).squeeze(-1)
                         del logits, all_logprob
                         torch.cuda.empty_cache()
+                        gc.collect()
 
                         ref_output = forward(ref_policy, query_response, tokenizer.pad_token_id)
                         ref_logits = ref_output.logits[:, context_length[turn] - 1 : -1] / (args.temperature + 1e-7)
@@ -374,6 +383,7 @@ class SCORETrainer(Trainer):
                         ref_logprob = torch.gather(ref_all_logprob, 2, response.unsqueeze(-1)).squeeze(-1)
                         del ref_output, ref_logits, ref_all_logprob, query_response
                         torch.cuda.empty_cache()
+                        gc.collect()
 
                         # Response Processing 1. truncate response after the first occurrence of `stop_token_id`
                         postprocessed_response = response
@@ -403,6 +413,8 @@ class SCORETrainer(Trainer):
 
 
                         del postprocessed_response, query_idx, response_idxs, response
+                        torch.cuda.empty_cache()
+                        gc.collect()
 
                         logprobs_sum[turn].append(logprob.sum(1))
                         ref_logprobs_sum[turn].append(ref_logprob.sum(1))
@@ -420,6 +432,8 @@ class SCORETrainer(Trainer):
 
 
                 del logitss
+                torch.cuda.empty_cache()
+                gc.collect()
 
                 # 4. compute rewards
                 kl = [logprobs_sum[turn] - ref_logprobs_sum[turn] for turn in range(self.num_turns)]
@@ -442,6 +456,7 @@ class SCORETrainer(Trainer):
 
                 del kl, scores, sequence_lengths, non_score_reward, rlhf_reward
                 torch.cuda.empty_cache()
+                gc.collect()
 
             # Do multiple epochs of PPO training, with a fresh random shuffle in each epoch
             for ppo_epoch_idx in range(args.num_ppo_epochs):
@@ -470,6 +485,8 @@ class SCORETrainer(Trainer):
                                     new_logprob, padding_masks[turn][micro_batch_inds], INVALID_LOGPROB
                                 ).sum(1))
                                 del output, logits, new_all_logprob, new_logprob
+                                torch.cuda.empty_cache()
+                                gc.collect()
 
                             # For stat only
                             # new_ratio = (new_logprobs - mb_logprobs).exp()
@@ -520,6 +537,7 @@ class SCORETrainer(Trainer):
                     )
                     # fmt: on
                     torch.cuda.empty_cache()
+                    gc.collect()
             with torch.no_grad():
                 # mean_entropy = (-logprobs).sum(1).mean()
                 # mean_non_score_reward = non_score_reward.mean()
