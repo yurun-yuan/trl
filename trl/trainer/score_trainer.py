@@ -297,7 +297,7 @@ class SCORETrainer(Trainer):
                 self.state.save_steps = args.save_steps
         self.control = self.callback_handler.on_train_begin(args, self.state, self.control)
 
-        for update in range(1, args.num_total_batches + 1):
+        for _ in range(1, args.num_total_batches + 1):
             self.state.episode += 1 * args.batch_size
             data = next(iter_dataloader)
             with torch.no_grad():
@@ -308,13 +308,11 @@ class SCORETrainer(Trainer):
                 context_length = [queries[0].shape[1]] + [None] * (self.num_turns - 1)
                 query_responses = [None] * self.num_turns
                 logitss = [None] * self.num_turns
-                responses = [[] for _ in range(self.num_turns)]
-                postprocessed_responses = [[] for _ in range(self.num_turns)]
-                logprobs = [[] for _ in range(self.num_turns)]
-                ref_logprobs = [[] for _ in range(self.num_turns)]
+                logprobs_sum = [[] for _ in range(self.num_turns)]
+                ref_logprobs_sum = [[] for _ in range(self.num_turns)]
                 scores = [[] for _ in range(self.num_turns)]
                 sequence_lengths = [[] for _ in range(self.num_turns)]
-                padding_masks = [None] * self.num_turns
+                padding_masks = [[] for _ in range(self.num_turns)]
                 with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
                     query_responses_t0, logitss_t0 = batch_generation(
                         unwrapped_model,
@@ -325,6 +323,8 @@ class SCORETrainer(Trainer):
                     )
                     query_responses[0] = query_responses_t0
                     logitss[0] = logitss_t0
+                    del query_responses_t0, logitss_t0
+                    queries[0] = None  # free up memory
 
 
                 queries_t1 = []
@@ -334,6 +334,7 @@ class SCORETrainer(Trainer):
                     query_resp_t0 = query_responses_t0[i][num_leading_pad : end]
                     query_resp_t0 = self.apply_ids_chat_template(query_resp_t0, self.prompt_templates[1].to(device))
                     queries_t1.append(query_resp_t0.to(device))
+                    del query_resp_t0
                 max_length = max(tensor.size(0) for tensor in queries_t1)
                 queries_t1 = [F.pad(tensor, (max_length - tensor.size(0), 0), value=tokenizer.pad_token_id) for tensor in queries_t1]
                 queries_t1 = torch.stack(queries_t1, dim=0)
@@ -352,10 +353,13 @@ class SCORETrainer(Trainer):
                     )
                     query_responses[1] = query_responses_t1
                     logitss[1] = logitss_t1
+                    del query_responses_t1, logitss_t1
+                    queries[1] = None  # free up memory
+
+                del queries
 
                 for turn in range(self.num_turns):
-                    for i in range(0, queries[turn].shape[0], args.local_rollout_forward_batch_size):
-                        query = queries[turn][i : i + args.local_rollout_forward_batch_size]
+                    for i in range(0, query_indices.shape[0], args.local_rollout_forward_batch_size):
                         query_response = query_responses[turn][i : i + args.local_rollout_forward_batch_size]
                         response = query_response[:, context_length[turn]:]
                         logits = logitss[turn][i : i + args.local_rollout_forward_batch_size]
@@ -368,7 +372,7 @@ class SCORETrainer(Trainer):
                         ref_logits = ref_output.logits[:, context_length[turn] - 1 : -1] / (args.temperature + 1e-7)
                         ref_all_logprob = F.log_softmax(ref_logits, dim=-1)
                         ref_logprob = torch.gather(ref_all_logprob, 2, response.unsqueeze(-1)).squeeze(-1)
-                        del ref_output, ref_logits, ref_all_logprob
+                        del ref_output, ref_logits, ref_all_logprob, query_response
                         torch.cuda.empty_cache()
 
                         # Response Processing 1. truncate response after the first occurrence of `stop_token_id`
@@ -387,44 +391,44 @@ class SCORETrainer(Trainer):
                             device=device,
                         )
 
-                        responses[turn].append(response)
-                        postprocessed_responses[turn].append(postprocessed_response)
-                        logprobs[turn].append(logprob)
-                        ref_logprobs[turn].append(ref_logprob)
+                        contain_eos_token = torch.any(postprocessed_response == tokenizer.eos_token_id, dim=-1)
+                        if args.missing_eos_penalty is not None:
+                            scores[turn][~contain_eos_token] -= self.args.missing_eos_penalty
+
+                        # be very careful with `padding_mask_p1`; see https://excalidraw.com/#json=LWnzG4w2k5DjF_EOL_xPt,e2w3a-hFJ_gX5vOfeyXGTw
+                        response_idxs = torch.arange(response.shape[0], device=response.device)
+                        padding_mask = response_idxs > sequence_length
+                        logprob = torch.masked_fill(logprob, padding_mask, INVALID_LOGPROB)
+                        ref_logprob = torch.masked_fill(ref_logprob, padding_mask, INVALID_LOGPROB)
+
+
+                        del postprocessed_response, query_idx, response_idxs, response
+
+                        logprobs_sum[turn].append(logprob.sum(1))
+                        ref_logprobs_sum[turn].append(ref_logprob.sum(1))
                         sequence_lengths[turn].append(sequence_length)
+                        padding_masks[turn].append(padding_mask)
                         scores[turn].append(score)
-                    responses[turn] = torch.cat(responses[turn], 0)
-                    postprocessed_responses[turn] = torch.cat(postprocessed_responses[turn], 0)
-                    logprobs[turn] = torch.cat(logprobs[turn], 0)
-                    ref_logprobs[turn] = torch.cat(ref_logprobs[turn], 0)
+                    logprobs_sum[turn] = torch.cat(logprobs_sum[turn], 0)
+                    ref_logprobs_sum[turn] = torch.cat(ref_logprobs_sum[turn], 0)
                     sequence_lengths[turn] = torch.cat(sequence_lengths[turn], 0)
+                    padding_masks[turn] = torch.cat(padding_masks[turn], 0)
                     scores[turn] = torch.cat(scores[turn], 0)
                     del (logprob, ref_logprob, score)
                     torch.cuda.empty_cache()
                     gc.collect()
 
-                    # Response Processing 3. filter response. Ensure that the sample contains stop_token_id
-                    # responses not passing that filter will receive a low (fixed) score
-                    # only query humans on responses that pass that filter
-                    contain_eos_token = torch.any(postprocessed_responses[turn] == tokenizer.eos_token_id, dim=-1)
-                    if args.missing_eos_penalty is not None:
-                        scores[turn][~contain_eos_token] -= self.args.missing_eos_penalty
-                    # accelerator.print(f"{scores=}, {(contain_eos_token.sum() / len(contain_eos_token))=}")
 
-                    # be very careful with `padding_mask_p1`; see https://excalidraw.com/#json=LWnzG4w2k5DjF_EOL_xPt,e2w3a-hFJ_gX5vOfeyXGTw
-                    response_idxs = torch.arange(responses[turn].shape[1], device=responses[turn].device).repeat(responses[turn].shape[0], 1)
-                    padding_masks[turn] = response_idxs > sequence_lengths[turn].unsqueeze(1)
-                    logprobs[turn] = torch.masked_fill(logprobs[turn], padding_masks[turn], INVALID_LOGPROB)
-                    ref_logprobs[turn] = torch.masked_fill(ref_logprobs[turn], padding_masks[turn], INVALID_LOGPROB)
+                del logitss
 
                 # 4. compute rewards
-                kl = [logprobs[turn] - ref_logprobs[turn] for turn in range(self.num_turns)]
+                kl = [logprobs_sum[turn] - ref_logprobs_sum[turn] for turn in range(self.num_turns)]
 
                 if self.stage == 0:
-                    non_score_reward = (-args.beta2 * kl[0] - args.beta1 * kl[1]).sum(1)
+                    non_score_reward = -args.beta2 * kl[0] - args.beta1 * kl[1]
                     rlhf_reward = scores[1] + non_score_reward
                 else:
-                    non_score_reward = (-args.beta1 * kl[0] - args.beta1 * kl[1]).sum(1)
+                    non_score_reward = -args.beta1 * kl[0] - args.beta1 * kl[1]
                     rlhf_reward = scores[0] + scores[1] + non_score_reward + args.bonus_coef * (score[1] - score[0])
 
                 # vectorized RLOO advantages implementation
@@ -435,6 +439,8 @@ class SCORETrainer(Trainer):
                 else:
                     advantages = rlhf_reward
                 advantages = advantages.flatten()
+
+                del kl, scores, sequence_lengths, non_score_reward, rlhf_reward
                 torch.cuda.empty_cache()
 
             # Do multiple epochs of PPO training, with a fresh random shuffle in each epoch
@@ -451,26 +457,26 @@ class SCORETrainer(Trainer):
                             micro_batch_inds = mini_batch_inds[micro_batch_start:micro_batch_end]
                             mb_advantage = advantages[micro_batch_inds]
 
-                            mb_logprobs, new_logprobs  = [], []
+                            mb_logprobs_sum, new_logprobs_sum = [], []
                             for turn in range(self.num_turns):
-                                mb_responses = responses[turn][micro_batch_inds]
                                 mb_query_responses = query_responses[turn][micro_batch_inds]
-                                mb_logprobs.append(logprobs[turn][micro_batch_inds])
+                                mb_logprobs_sum.append(logprobs_sum[turn][micro_batch_inds])
 
                                 output = forward(model, mb_query_responses, tokenizer.pad_token_id)
                                 logits = output.logits[:, context_length[turn] - 1 : -1]/(args.temperature + 1e-7)
                                 new_all_logprob = F.log_softmax(logits, dim=-1)
-                                new_logprob = torch.gather(new_all_logprob, 2, mb_responses.unsqueeze(-1)).squeeze(-1)
-                                new_logprobs.append(torch.masked_fill(
+                                new_logprob = torch.gather(new_all_logprob, 2, mb_query_responses[:, context_length[turn] : ].unsqueeze(-1)).squeeze(-1)
+                                new_logprobs_sum.append(torch.masked_fill(
                                     new_logprob, padding_masks[turn][micro_batch_inds], INVALID_LOGPROB
-                                ))
+                                ).sum(1))
+                                del output, logits, new_all_logprob, new_logprob
 
                             # For stat only
                             # new_ratio = (new_logprobs - mb_logprobs).exp()
 
-                            new_logprobs = new_logprobs[0].sum(1) + new_logprobs[1].sum(1)
-                            mb_logprobs = mb_logprobs[0].sum(1) + mb_logprobs[1].sum(1)
-                            logprobs_diff = new_logprobs - mb_logprobs
+                            new_logprobs_sum = sum(new_logprobs_sum)
+                            mb_logprobs_sum = sum(mb_logprobs_sum)
+                            logprobs_diff = new_logprobs_sum - mb_logprobs_sum
                             ratio = torch.exp(logprobs_diff)
                             pg_losses = -mb_advantage * ratio
                             pg_losses2 = -mb_advantage * torch.clamp(ratio, 1.0 - args.cliprange, 1.0 + args.cliprange)
@@ -516,14 +522,14 @@ class SCORETrainer(Trainer):
                     torch.cuda.empty_cache()
             with torch.no_grad():
                 # mean_entropy = (-logprobs).sum(1).mean()
-                mean_non_score_reward = non_score_reward.mean()
+                # mean_non_score_reward = non_score_reward.mean()
                 eps = int(self.state.episode / (time.time() - start_time))
                 metrics = {}
                 metrics["eps"] = eps
                 metrics["objective/kl_turn1"] = self.accelerator.gather(kl[0].sum(1).mean()).mean().item()
                 metrics["objective/kl_turn2"] = self.accelerator.gather(kl[1].sum(1).mean()).mean().item()
                 # metrics["objective/entropy"] = self.accelerator.gather(mean_entropy).mean().item()
-                metrics["objective/non_score_reward"] = self.accelerator.gather(mean_non_score_reward).mean().item()
+                # metrics["objective/non_score_reward"] = self.accelerator.gather(mean_non_score_reward).mean().item()
                 metrics["objective/rlhf_reward"] = self.accelerator.gather(rlhf_reward).mean().item()
                 metrics["objective/scores_turn1"] = self.accelerator.gather(scores[0].mean()).mean().item()
                 metrics["objective/scores_turn2"] = self.accelerator.gather(scores[1].mean()).mean().item()
@@ -535,8 +541,8 @@ class SCORETrainer(Trainer):
                 # metrics["policy/entropy_avg"] = self.accelerator.gather(entropy_stats).mean().item()
                 # metrics["val/ratio"] = self.accelerator.gather(ratio_stats).mean().item()
                 # metrics["val/ratio_var"] = self.accelerator.gather(ratio_stats).var().item()
-                metrics["val/num_eos_tokens_turn1"] = (responses[0] == tokenizer.eos_token_id).sum().item()
-                metrics["val/num_eos_tokens_turn2"] = (responses[1] == tokenizer.eos_token_id).sum().item()
+                # metrics["val/num_eos_tokens_turn1"] = (responses[0] == tokenizer.eos_token_id).sum().item()
+                # metrics["val/num_eos_tokens_turn2"] = (responses[1] == tokenizer.eos_token_id).sum().item()
                 metrics["lr"] = self.lr_scheduler.get_last_lr()[0]
                 metrics["episode"] = self.state.episode
                 self.state.epoch = self.state.episode / self.train_dataset_len  # used by self.log
