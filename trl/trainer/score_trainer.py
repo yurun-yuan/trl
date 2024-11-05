@@ -393,11 +393,11 @@ class SCORETrainer(Trainer):
 
                         contain_eos_token = torch.any(postprocessed_response == tokenizer.eos_token_id, dim=-1)
                         if args.missing_eos_penalty is not None:
-                            scores[turn][~contain_eos_token] -= self.args.missing_eos_penalty
+                            score[~contain_eos_token] -= self.args.missing_eos_penalty
 
                         # be very careful with `padding_mask_p1`; see https://excalidraw.com/#json=LWnzG4w2k5DjF_EOL_xPt,e2w3a-hFJ_gX5vOfeyXGTw
-                        response_idxs = torch.arange(response.shape[0], device=response.device)
-                        padding_mask = response_idxs > sequence_length
+                        response_idxs = torch.arange(response.shape[1], device=response.device).repeat(response.shape[0], 1)
+                        padding_mask = response_idxs > sequence_length.unsqueeze(1)
                         logprob = torch.masked_fill(logprob, padding_mask, INVALID_LOGPROB)
                         ref_logprob = torch.masked_fill(ref_logprob, padding_mask, INVALID_LOGPROB)
 
