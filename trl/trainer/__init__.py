@@ -62,6 +62,8 @@ _import_structure = {
     "rloo_trainer": ["RLOOTrainer"],
     "score_config": ["SCOREConfig"],
     "score_trainer": ["SCORETrainer"],
+    "scorev2_config": ["SCOREv2Config"],
+    "scorev2_trainer": ["SCOREv2Trainer"],
     "sft_config": ["SFTConfig"],
     "sft_trainer": ["SFTTrainer"],
     "utils": [
@@ -129,6 +131,8 @@ if TYPE_CHECKING:
     from .rloo_trainer import RLOOTrainer
     from .score_config import SCOREConfig
     from .score_trainer import SCORETrainer
+    from .scorev2_config import SCOREv2Config
+    from .scorev2_trainer import SCOREv2Trainer
     from .sft_config import SFTConfig
     from .sft_trainer import SFTTrainer
     from .utils import (
