@@ -109,6 +109,9 @@ def _tokenize(
             batch, tokenizer, features["prompt"], features["chosen"], features["rejected"], args, model
         )
 
+    if args.dataset_post_process is not None:
+        args.dataset_post_process(batch)
+
     return dict(batch)
 
 

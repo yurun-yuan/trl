@@ -14,7 +14,7 @@
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 from transformers import TrainingArguments
 
@@ -170,6 +170,8 @@ class DPOConfig(TrainingArguments):
     ref_model_mixup_alpha: float = 0.9
     ref_model_sync_steps: int = 64
     rpo_alpha: Optional[float] = None
+
+    dataset_post_process: Optional[Callable[[Dict[str, List[int]]], None]] = None
 
     def __post_init__(self):
         if self.max_target_length is not None:
