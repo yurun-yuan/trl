@@ -171,7 +171,7 @@ class DPOConfig(TrainingArguments):
     ref_model_sync_steps: int = 64
     rpo_alpha: Optional[float] = None
 
-    dataset_post_process: Optional[Callable[[Dict[str, List[int]]], None]] = None
+    dataset_post_process: Optional[Callable[[Dict[str, List[List[int]]]], None]] = None
 
     def __post_init__(self):
         if self.max_target_length is not None:
